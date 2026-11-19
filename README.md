@@ -4,7 +4,7 @@
 
 A macOS app that queries Jamf Pro and lists the apps installed across your fleet that aren't covered by Patch Management, recommending the Combined Definition title to add.
 
-**Version:** 0.2.0
+**Version:** 0.3.0
 **Owner:** Russell Collis
 
 ## Features
