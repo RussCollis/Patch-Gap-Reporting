@@ -105,6 +105,28 @@ actor JamfClient {
         try await get("/api/v2/patch-software-title-configurations")
     }
 
+    /// Jamf's computer counts for each configured title, keyed by configuration ID.
+    /// Titles whose summary can't be read are left out.
+    func fetchPatchSummaries(for configurationIDs: [String]) async -> [String: PatchSummary] {
+        await withTaskGroup(of: (String, PatchSummary?).self) { group in
+            var summaries: [String: PatchSummary] = [:]
+            var pending = configurationIDs.makeIterator()
+            // Keep a handful of requests in flight rather than firing hundreds at once.
+            func addNext() {
+                guard let id = pending.next() else { return }
+                group.addTask {
+                    (id, try? await self.get("/api/v2/patch-software-title-configurations/\(id)/patch-summary") as PatchSummary)
+                }
+            }
+            for _ in 0..<8 { addNext() }
+            for await (id, summary) in group {
+                if let summary { summaries[id] = summary }
+                addNext()
+            }
+            return summaries
+        }
+    }
+
     /// Patch policies, used to tell actively patched titles from reporting-only ones.
     func fetchPatchPolicies() async throws -> [PatchPolicy] {
         try await getAllPages("/api/v2/patch-policies", pageSize: 200)

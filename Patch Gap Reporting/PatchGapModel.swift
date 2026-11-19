@@ -32,6 +32,7 @@ final class PatchGapModel {
     private var configurations: [PatchTitleConfiguration] = []
     /// `nil` when patch policies couldn't be read, so active vs reporting-only can't be told apart.
     private var patchPolicies: [PatchPolicy]?
+    private var patchSummaries: [String: PatchSummary] = [:]
     private var availableTitles: [PatchAvailableTitle] = []
     private var appInstallerTitles: [AppInstallerTitle] = []
     private var appInstallerDeployments: [AppInstallerDeployment] = []
@@ -83,6 +84,9 @@ final class PatchGapModel {
             progressMessage = "Reading Patch Management titles…"
             configurations = try await client.fetchPatchTitleConfigurations()
 
+            progressMessage = "Reading Patch Management install counts…"
+            patchSummaries = await client.fetchPatchSummaries(for: configurations.map(\.id))
+
             progressMessage = "Reading patch policies…"
             patchPolicies = await optional("Patch policies (needs Read Patch Policies; titles shown as Patched without a Reporting only check)") {
                 try await client.fetchPatchPolicies()
@@ -119,6 +123,7 @@ final class PatchGapModel {
             installed: installed,
             configurations: configurations,
             patchPolicies: patchPolicies,
+            patchSummaries: patchSummaries,
             availableTitles: availableTitles,
             appInstallerTitles: appInstallerTitles,
             appInstallerDeployments: appInstallerDeployments,

@@ -3,8 +3,9 @@ import UniformTypeIdentifiers
 
 /// Which rows the table shows.
 enum RowFilter: String, CaseIterable, Identifiable {
-    case unpatched = "Not patched"
-    case reportingOnly = "Reporting only"
+    case unpatched = "Not Patched"
+    case reportingOnly = "Reporting Only"
+    case noTitle = "No Title Available"
     case needsCombined = "Not Combined"
     case patched = "Patched"
     case all = "All"
@@ -15,6 +16,7 @@ enum RowFilter: String, CaseIterable, Identifiable {
         switch self {
         case .unpatched: row.status.isNotPatched
         case .reportingOnly: row.status == .reportingOnly
+        case .noTitle: row.status == .notPatchedNoTitle
         case .needsCombined: row.definition.needsCombined
         case .patched: row.status.isPatched
         case .all: true
@@ -57,6 +59,7 @@ struct ContentView: View {
             footer
         }
         .frame(minWidth: 900, minHeight: 500)
+        .tint(.blue)
         .navigationTitle("Patch Gap")
         .searchable(text: $searchText, prompt: "Search apps or bundle IDs")
         .toolbar { toolbarContent }
@@ -100,16 +103,16 @@ struct ContentView: View {
             }
             .width(min: 140, ideal: 200)
             TableColumn("Computers", value: \.computerCount) { row in
-                Text(row.computerCount, format: .number).monospacedDigit()
+                Text(row.computerCount, format: .number).monospacedDigit().fontWeight(.medium).foregroundStyle(.blue)
             }
             .width(min: 70, ideal: 80)
             TableColumn("Versions", value: \.versionText)
                 .width(min: 80, ideal: 120)
-            TableColumn("In Jamf as", value: \.jamfTitle)
+            TableColumn("In Jamf As", value: \.jamfTitle)
                 .width(min: 120, ideal: 180)
-            TableColumn("Recommended patch title", value: \.recommendedPatchTitle)
+            TableColumn("Recommended Patch Title", value: \.recommendedPatchTitle)
                 .width(min: 160, ideal: 230)
-            TableColumn("App Installer available", value: \.appInstallerTitle)
+            TableColumn("App Installer Available", value: \.appInstallerTitle)
                 .width(min: 140, ideal: 180)
         }
         .overlay {
@@ -128,6 +131,7 @@ struct ContentView: View {
                 Text("Refresh to compare installed apps with your Patch Management titles.")
             } actions: {
                 Button("Refresh") { Task { await model.refresh() } }
+                    .buttonStyle(.glassProminent)
             }
         } else {
             ContentUnavailableView {
@@ -136,6 +140,7 @@ struct ContentView: View {
                 Text("Add your Jamf Pro URL and API client to get started.")
             } actions: {
                 Button("Connection Settings…") { showingSettings = true }
+                    .buttonStyle(.glassProminent)
             }
         }
     }
@@ -150,7 +155,13 @@ struct ContentView: View {
                 let reporting = model.rows.filter { $0.status == .reportingOnly }.count
                 let combined = model.rows.filter { $0.definition == .combined }.count
                 let notCombined = model.rows.filter(\.definition.needsCombined).count
-                Text("\(model.rows.count) apps · \(unpatched) not patched (\(reporting) reporting only) · \(combined) using Combined · \(notCombined) could switch to Combined")
+                HStack(spacing: 6) {
+                    StatChip(value: model.rows.count, label: "apps", systemImage: "app.badge", tint: .blue)
+                    StatChip(value: unpatched, label: "not patched", systemImage: "xmark.shield", tint: .indigo)
+                    StatChip(value: reporting, label: "reporting only", systemImage: "eye", tint: .cyan)
+                    StatChip(value: combined, label: "using Combined", systemImage: "square.stack.3d.up", tint: .teal)
+                    StatChip(value: notCombined, label: "could switch to Combined", systemImage: "arrow.triangle.merge", tint: .mint)
+                }
                 if let date = model.lastRefreshed {
                     Text("Updated \(date.formatted(date: .omitted, time: .shortened))")
                 }
@@ -163,6 +174,7 @@ struct ContentView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal)
         .padding(.vertical, 6)
+        .background(LinearGradient(colors: [.blue.opacity(0.10), .blue.opacity(0.03)], startPoint: .leading, endPoint: .trailing))
     }
 
     /// When the Jamf App Catalog App Installer title list was last scanned, linking to Jamf's published list.
@@ -189,20 +201,24 @@ struct ContentView: View {
             .pickerStyle(.segmented)
         }
         ToolbarItem {
-            Menu("Filters", systemImage: "line.3.horizontal.decrease") {
+            Menu("Filters", systemImage: "line.3.horizontal.decrease.circle") {
                 Toggle("Hide Apple apps", isOn: $model.options.hideAppleApps)
                 Toggle("Only apps in /Applications", isOn: $model.options.applicationsFolderOnly)
             }
+            .foregroundStyle(.blue)
         }
         ToolbarItem {
             Button("Export CSV", systemImage: "square.and.arrow.up") { showingExporter = true }
+                .foregroundStyle(.blue)
                 .disabled(visibleRows.isEmpty)
         }
         ToolbarItem {
             Button("Connection Settings", systemImage: "gearshape") { showingSettings = true }
+                .foregroundStyle(.blue)
         }
         ToolbarItem {
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
+                .buttonStyle(.glassProminent)
                 .disabled(model.isLoading || !model.isConfigured)
                 .keyboardShortcut("r")
         }
@@ -225,6 +241,27 @@ private struct StatusLabel: View {
         case .notPatchedNoTitle:
             Label(status.rawValue, systemImage: "xmark.circle.fill").foregroundStyle(.red)
         }
+    }
+}
+
+/// A small tinted capsule showing one summary count in the footer.
+private struct StatChip: View {
+    let value: Int
+    let label: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        Label {
+            Text("\(value, format: .number) \(label)")
+        } icon: {
+            Image(systemName: systemImage)
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(tint)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(tint.opacity(0.14), in: .capsule)
     }
 }
 

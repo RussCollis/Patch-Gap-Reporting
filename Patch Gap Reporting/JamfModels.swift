@@ -58,6 +58,15 @@ nonisolated struct PatchTitleConfiguration: Decodable, Sendable {
     }
 }
 
+/// Jamf's own install counts for a configured title, from
+/// `GET /api/v2/patch-software-title-configurations/{id}/patch-summary`.
+nonisolated struct PatchSummary: Decodable, Sendable {
+    let upToDate: Int?
+    let outOfDate: Int?
+
+    var computerCount: Int { (upToDate ?? 0) + (outOfDate ?? 0) }
+}
+
 /// A patch policy from `GET /api/v2/patch-policies`. Field names have varied between
 /// Jamf Pro releases, so both spellings are accepted.
 nonisolated struct PatchPolicy: Decodable, Sendable {

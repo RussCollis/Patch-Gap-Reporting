@@ -68,6 +68,7 @@ nonisolated enum PatchAnalyzer {
         installed: [(computerID: String, app: InventoryApplication)],
         configurations: [PatchTitleConfiguration],
         patchPolicies: [PatchPolicy]?,
+        patchSummaries: [String: PatchSummary] = [:],
         availableTitles: [PatchAvailableTitle],
         appInstallerTitles: [AppInstallerTitle],
         appInstallerDeployments: [AppInstallerDeployment],
@@ -96,6 +97,10 @@ nonisolated enum PatchAnalyzer {
 
         let configsByKey = Dictionary(grouping: configurations) { normalise($0.titleName) }
         let catalogByKey = Dictionary(grouping: availableTitles) { normalise($0.appName) }
+        // Titles often carry the publisher ("Microsoft Windows App") where inventory doesn't ("Windows App"),
+        // so also index them without it, as a fallback behind the exact name.
+        let configsByShortKey = Dictionary(grouping: configurations) { withoutPublisher(normalise($0.titleName), $0.softwareTitlePublisher) }
+        let catalogByShortKey = Dictionary(grouping: availableTitles) { withoutPublisher(normalise($0.appName), $0.publisher) }
         let combinedNameIDs = Set(availableTitles.filter(\.isCombinedDefinition).map(\.nameId))
         let installersByKey = Dictionary(grouping: appInstallerTitles) { normalise($0.titleName) }
         var installersByBundle: [String: AppInstallerTitle] = [:]
@@ -112,21 +117,33 @@ nonisolated enum PatchAnalyzer {
             config.isCombinedDefinition || config.softwareTitleNameId.map(combinedNameIDs.contains) == true
         }
 
-        return groups.map { key, group in
-            let combined = catalogByKey[key]?.first(where: \.isCombinedDefinition)
-            let recommended = combined ?? preferredTitle(catalogByKey[key] ?? [])
-
+        var matchedConfigIDs = Set<String>()
+        var rows = groups.map { key, group in
             // Prefer a bundle ID match for App Installers; names differ more often than bundle IDs.
-            let installer = group.bundleIDs.lazy.compactMap { installersByBundle[$0.lowercased()] }.first
+            let installer = group.bundleIDs.sorted().lazy.compactMap { installersByBundle[$0.lowercased()] }.first
                 ?? installersByKey[key]?.first
             let installerDeployed = installer.map { deployedTitleIDs.contains($0.id) } ?? false
+
+            // Try the app's own name, then the bundle-matched App Installer's name, then titles without their publisher.
+            let installerKey = installer.map { normalise($0.titleName) }
+            func lookup<T>(_ exact: [String: [T]], _ short: [String: [T]]) -> [T] {
+                for candidate in [exact[key], installerKey.flatMap { exact[$0] }, short[key]] {
+                    if let found = candidate, !found.isEmpty { return found }
+                }
+                return []
+            }
+            let catalog = lookup(catalogByKey, catalogByShortKey)
+            let combined = catalog.first(where: \.isCombinedDefinition)
+            let recommended = combined ?? preferredTitle(catalog)
 
             let status: PatchStatus
             let definition: DefinitionKind
             var jamfTitle = ""
             var recommendedName = ""
 
-            if let configs = configsByKey[key], !configs.isEmpty {
+            let configs = lookup(configsByKey, configsByShortKey)
+            matchedConfigIDs.formUnion(configs.map(\.id))
+            if !configs.isEmpty {
                 let activePolicies = configs.reduce(0) { $0 + (activePolicyCounts?[$1.id] ?? 0) }
                 let policyNote = activePolicyCounts == nil ? "" : " (\(activePolicies) active polic\(activePolicies == 1 ? "y" : "ies"))"
                 jamfTitle = configs.map(\.titleName).joined(separator: ", ") + policyNote
@@ -164,7 +181,29 @@ nonisolated enum PatchAnalyzer {
                 appInstallerTitle: installerDeployed ? "" : (installer?.titleName ?? "")
             )
         }
-        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+
+        // Every configured title gets a row, even when no inventory app matched it by name (or the
+        // inventory filters hid it), using Jamf's own install count from the patch summary.
+        for config in configurations where !matchedConfigIDs.contains(config.id) {
+            let activePolicies = activePolicyCounts?[config.id] ?? 0
+            let policyNote = activePolicyCounts == nil ? "" : " (\(activePolicies) active polic\(activePolicies == 1 ? "y" : "ies"))"
+            let combined = catalogByKey[normalise(config.titleName)]?.first(where: \.isCombinedDefinition)
+            let definition: DefinitionKind = isCombined(config) ? .combined : (combined != nil ? .versionSpecificCombinedAvailable : .standard)
+            rows.append(AppPatchRow(
+                id: "title:\(config.id)",
+                name: config.displayName ?? config.titleName,
+                bundleIDs: [],
+                versions: [],
+                computerCount: patchSummaries[config.id]?.computerCount ?? 0,
+                status: activePolicyCounts == nil || activePolicies > 0 ? .patched : .reportingOnly,
+                definition: definition,
+                jamfTitle: config.titleName + policyNote,
+                recommendedPatchTitle: definition == .versionSpecificCombinedAvailable ? (combined?.displayName ?? "") : "",
+                appInstallerTitle: ""
+            ))
+        }
+
+        return rows.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     /// Reduces an app or title name to a matching key, so that "Adobe Photoshop 2025.app",
@@ -184,6 +223,13 @@ nonisolated enum PatchAnalyzer {
         let words = tokens.filter { !$0.allSatisfy({ $0.isNumber || $0 == "." }) }
         if !words.isEmpty { tokens = words }
         return tokens.joined(separator: " ")
+    }
+
+    /// Drops a leading publisher name from a normalised title, e.g. "microsoft windows app" → "windows app".
+    private static func withoutPublisher(_ key: String, _ publisher: String?) -> String {
+        guard let publisher, let word = normalise(publisher).split(separator: " ").first else { return key }
+        let prefix = word + " "
+        return key.hasPrefix(prefix) && key.count > prefix.count ? String(key.dropFirst(prefix.count)) : key
     }
 
     private static func displayName(_ name: String) -> String {
