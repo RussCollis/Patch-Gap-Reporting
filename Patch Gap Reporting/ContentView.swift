@@ -94,6 +94,10 @@ struct ContentView: View {
                     Text(row.name)
                     if !row.bundleIDs.isEmpty {
                         Text(row.bundleIDText).font(.caption).foregroundStyle(.secondary)
+                    } else if row.isJamfTitleOnly {
+                        Text("Jamf patch title – not found in inventory").font(.caption).foregroundStyle(.blue)
+                    } else {
+                        Text("No bundle ID in inventory").font(.caption).foregroundStyle(.tertiary)
                     }
                 }
             }
@@ -118,6 +122,18 @@ struct ContentView: View {
                 .width(min: 160, ideal: 230)
             TableColumn("App Installer Available", value: \.appInstallerTitle)
                 .width(min: 140, ideal: 180)
+            TableColumn("Title Editor") { row in
+                Picker("Jamf Title Editor", selection: Binding(
+                    get: { model.titleEditor[row.id] },
+                    set: { model.setTitleEditor($0, for: row.id) }
+                )) {
+                    Text("—").tag(TitleEditorMode?.none)
+                    ForEach(TitleEditorMode.allCases) { Text($0.rawValue).tag(Optional($0)) }
+                }
+                .labelsHidden()
+                .help("Set if this app is handled through a Jamf Title Editor custom title")
+            }
+            .width(min: 150, ideal: 170)
         }
         .overlay {
             if model.isLoading && model.rows.isEmpty {
@@ -298,6 +314,8 @@ private struct DefinitionLabel: View {
             Label(definition.rawValue, systemImage: "arrow.triangle.merge").foregroundStyle(.orange)
         case .combinedAvailable:
             Label(definition.rawValue, systemImage: "square.stack.3d.up").foregroundStyle(.blue)
+        case .titleEditor:
+            Label(definition.rawValue, systemImage: "pencil.and.list.clipboard").foregroundStyle(.blue)
         case .standard, .standardAvailable, .appInstaller:
             Text(definition.rawValue).foregroundStyle(.secondary)
         case .none:

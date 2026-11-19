@@ -13,6 +13,9 @@ final class PatchGapModel {
 
     var options = AnalysisOptions()
 
+    /// How apps are handled through Jamf Title Editor, by row ID, set by the admin and remembered between launches.
+    private(set) var titleEditor: [String: TitleEditorMode] = PatchGapModel.loadTitleEditor()
+
     // MARK: Results
 
     private(set) var rows: [AppPatchRow] = []
@@ -51,6 +54,23 @@ final class PatchGapModel {
         if !text.isEmpty, !text.lowercased().hasPrefix("http") { text = "https://" + text }
         guard let url = URL(string: text), url.host() != nil else { return nil }
         return url
+    }
+
+    func setTitleEditor(_ mode: TitleEditorMode?, for rowID: String) {
+        titleEditor[rowID] = mode
+        UserDefaults.standard.set(titleEditor.mapValues(\.rawValue), forKey: "titleEditorModes")
+        reanalyse()
+    }
+
+    /// Reads the saved choices, carrying over apps ticked with the earlier on/off checkbox as Patched.
+    private static func loadTitleEditor() -> [String: TitleEditorMode] {
+        let defaults = UserDefaults.standard
+        var modes = (defaults.dictionary(forKey: "titleEditorModes") as? [String: String] ?? [:])
+            .compactMapValues(TitleEditorMode.init(rawValue:))
+        for id in defaults.stringArray(forKey: "titleEditorIDs") ?? [] where modes[id] == nil {
+            modes[id] = .patched
+        }
+        return modes
     }
 
     func saveSettings() {
@@ -127,7 +147,8 @@ final class PatchGapModel {
             availableTitles: availableTitles,
             appInstallerTitles: appInstallerTitles,
             appInstallerDeployments: appInstallerDeployments,
-            options: options
+            options: options,
+            titleEditor: titleEditor
         )
     }
 

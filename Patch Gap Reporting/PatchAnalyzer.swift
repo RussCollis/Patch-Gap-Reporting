@@ -15,6 +15,14 @@ nonisolated enum PatchStatus: String, CaseIterable, Identifiable, Sendable {
     var isNotPatched: Bool { self != .patched }
 }
 
+/// How an app is handled through a Jamf Title Editor custom title, as set by the admin.
+nonisolated enum TitleEditorMode: String, CaseIterable, Identifiable, Sendable {
+    case patched = "Title Editor Patched"
+    case reporting = "Title Editor Reporting"
+
+    var id: String { rawValue }
+}
+
 /// Which kind of Jamf patch definition covers (or could cover) an app.
 nonisolated enum DefinitionKind: String, Sendable {
     /// The configured patch title is a Combined Definition.
@@ -29,6 +37,8 @@ nonisolated enum DefinitionKind: String, Sendable {
     case standardAvailable = "Standard available"
     /// Patched through a Jamf App Catalog App Installer rather than a patch definition.
     case appInstaller = "App Installer"
+    /// Marked by the admin as patched through a Jamf Title Editor custom title.
+    case titleEditor = "Title Editor"
     case none = ""
 
     var needsCombined: Bool { self == .versionSpecificCombinedAvailable }
@@ -51,6 +61,8 @@ nonisolated struct AppPatchRow: Identifiable, Hashable, Sendable {
     let appInstallerTitle: String
 
     var bundleIDText: String { bundleIDs.joined(separator: ", ") }
+    /// A configured Jamf patch title that no inventory app matched, so it has no bundle IDs or versions.
+    var isJamfTitleOnly: Bool { id.hasPrefix("title:") }
     var versionText: String { versions.joined(separator: ", ") }
     var statusText: String { status.rawValue }
     var definitionText: String { definition.rawValue }
@@ -72,37 +84,97 @@ nonisolated enum PatchAnalyzer {
         availableTitles: [PatchAvailableTitle],
         appInstallerTitles: [AppInstallerTitle],
         appInstallerDeployments: [AppInstallerDeployment],
-        options: AnalysisOptions
+        options: AnalysisOptions,
+        titleEditor: [String: TitleEditorMode] = [:]
     ) -> [AppPatchRow] {
-        // Group installed apps by normalised name.
+        // Group installed apps. Inventory sometimes reports a stray name against a bundle ID
+        // (e.g. Self Service+ listed as "Microsoft Outlook"), so first collect every bundle ID,
+        // name it by what most computers call it, then merge bundle IDs and bundle-less apps by that name.
         struct Group {
             var name: String
             var bundleIDs = Set<String>()
             var versions = Set<String>()
             var computers = Set<String>()
+
+            mutating func merge(_ other: Group) {
+                bundleIDs.formUnion(other.bundleIDs)
+                versions.formUnion(other.versions)
+                computers.formUnion(other.computers)
+            }
         }
-        var groups: [String: Group] = [:]
+        struct BundleTally {
+            var nameCounts: [String: Int] = [:]
+            var group = Group(name: "")
+        }
+        var bundles: [String: BundleTally] = [:]
+        var bundleless: [String: Group] = [:]
         for (computerID, app) in installed {
             if options.hideAppleApps, app.bundleId?.hasPrefix("com.apple.") == true { continue }
             if options.applicationsFolderOnly, let path = app.path, !path.hasPrefix("/Applications/") { continue }
 
-            let key = normalise(app.name)
-            guard !key.isEmpty else { continue }
-            var group = groups[key] ?? Group(name: displayName(app.name))
-            if let bundleID = app.bundleId, !bundleID.isEmpty { group.bundleIDs.insert(bundleID) }
-            if let version = app.version, !version.isEmpty { group.versions.insert(version) }
-            group.computers.insert(computerID)
-            groups[key] = group
+            let name = displayName(app.name)
+            guard !normalise(name).isEmpty else { continue }
+            if let bundleID = app.bundleId, !bundleID.isEmpty {
+                let bundleKey = bundleID.lowercased()
+                var tally = bundles[bundleKey] ?? BundleTally()
+                tally.nameCounts[name, default: 0] += 1
+                tally.group.bundleIDs.insert(bundleID)
+                if let version = app.version, !version.isEmpty { tally.group.versions.insert(version) }
+                tally.group.computers.insert(computerID)
+                bundles[bundleKey] = tally
+            } else {
+                let key = normalise(name)
+                var group = bundleless[key] ?? Group(name: name)
+                if let version = app.version, !version.isEmpty { group.versions.insert(version) }
+                group.computers.insert(computerID)
+                bundleless[key] = group
+            }
         }
 
-        let configsByKey = Dictionary(grouping: configurations) { normalise($0.titleName) }
-        let catalogByKey = Dictionary(grouping: availableTitles) { normalise($0.appName) }
+        var groups: [String: Group] = [:]
+        for tally in bundles.values {
+            // Most common name wins; ties go to the alphabetically first so results are stable.
+            let name = tally.nameCounts.max { $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key }?.key ?? ""
+            var group = tally.group
+            group.name = name
+            let key = normalise(name)
+            if var existing = groups[key] {
+                existing.merge(group)
+                groups[key] = existing
+            } else {
+                groups[key] = group
+            }
+        }
+        for (key, group) in bundleless {
+            if var existing = groups[key] {
+                existing.merge(group)
+                groups[key] = existing
+            } else {
+                groups[key] = group
+            }
+        }
+
+        // A configuration can be found by its catalogue title name or its admin-given display name;
+        // Title Editor titles often differ between the two (e.g. display name "Global Protect").
+        func index(_ keys: (PatchTitleConfiguration) -> [String]) -> [String: [PatchTitleConfiguration]] {
+            var result: [String: [PatchTitleConfiguration]] = [:]
+            for config in configurations {
+                for key in Set(keys(config)) where !key.isEmpty { result[key, default: []].append(config) }
+            }
+            return result
+        }
+        let configsByKey = index { config in
+            [config.softwareTitleName, config.displayName].compactMap { $0 }.map { compact(normalise($0)) }
+        }
+        let catalogByKey = Dictionary(grouping: availableTitles) { compact(normalise($0.appName)) }
         // Titles often carry the publisher ("Microsoft Windows App") where inventory doesn't ("Windows App"),
         // so also index them without it, as a fallback behind the exact name.
-        let configsByShortKey = Dictionary(grouping: configurations) { withoutPublisher(normalise($0.titleName), $0.softwareTitlePublisher) }
-        let catalogByShortKey = Dictionary(grouping: availableTitles) { withoutPublisher(normalise($0.appName), $0.publisher) }
+        let configsByShortKey = index { config in
+            [config.softwareTitleName, config.displayName].compactMap { $0 }.map { compact(withoutPublisher(normalise($0), config.softwareTitlePublisher)) }
+        }
+        let catalogByShortKey = Dictionary(grouping: availableTitles) { compact(withoutPublisher(normalise($0.appName), $0.publisher)) }
         let combinedNameIDs = Set(availableTitles.filter(\.isCombinedDefinition).map(\.nameId))
-        let installersByKey = Dictionary(grouping: appInstallerTitles) { normalise($0.titleName) }
+        let installersByKey = Dictionary(grouping: appInstallerTitles) { compact(normalise($0.titleName)) }
         var installersByBundle: [String: AppInstallerTitle] = [:]
         for title in appInstallerTitles {
             if let bundleID = title.bundleId?.lowercased(), !bundleID.isEmpty { installersByBundle[bundleID] = title }
@@ -119,15 +191,16 @@ nonisolated enum PatchAnalyzer {
 
         var matchedConfigIDs = Set<String>()
         var rows = groups.map { key, group in
+            let matchKey = compact(key)
             // Prefer a bundle ID match for App Installers; names differ more often than bundle IDs.
             let installer = group.bundleIDs.sorted().lazy.compactMap { installersByBundle[$0.lowercased()] }.first
-                ?? installersByKey[key]?.first
+                ?? installersByKey[matchKey]?.first
             let installerDeployed = installer.map { deployedTitleIDs.contains($0.id) } ?? false
 
             // Try the app's own name, then the bundle-matched App Installer's name, then titles without their publisher.
-            let installerKey = installer.map { normalise($0.titleName) }
+            let installerKey = installer.map { compact(normalise($0.titleName)) }
             func lookup<T>(_ exact: [String: [T]], _ short: [String: [T]]) -> [T] {
-                for candidate in [exact[key], installerKey.flatMap { exact[$0] }, short[key]] {
+                for candidate in [exact[matchKey], installerKey.flatMap { exact[$0] }, short[matchKey]] {
                     if let found = candidate, !found.isEmpty { return found }
                 }
                 return []
@@ -141,7 +214,13 @@ nonisolated enum PatchAnalyzer {
             var jamfTitle = ""
             var recommendedName = ""
 
-            let configs = lookup(configsByKey, configsByShortKey)
+            // Every title matching the app's name or its App Installer's name, so a Jamf title and a
+            // Title Editor title for the same app land on one row; publisher-less names are a last resort.
+            var configs = [configsByKey[matchKey], installerKey.flatMap { configsByKey[$0] }]
+                .compactMap { $0 }.flatMap { $0 }
+            if configs.isEmpty { configs = configsByShortKey[matchKey] ?? [] }
+            var seenConfigIDs = Set<String>()
+            configs = configs.filter { seenConfigIDs.insert($0.id).inserted }
             matchedConfigIDs.formUnion(configs.map(\.id))
             if !configs.isEmpty {
                 let activePolicies = configs.reduce(0) { $0 + (activePolicyCounts?[$1.id] ?? 0) }
@@ -187,7 +266,7 @@ nonisolated enum PatchAnalyzer {
         for config in configurations where !matchedConfigIDs.contains(config.id) {
             let activePolicies = activePolicyCounts?[config.id] ?? 0
             let policyNote = activePolicyCounts == nil ? "" : " (\(activePolicies) active polic\(activePolicies == 1 ? "y" : "ies"))"
-            let combined = catalogByKey[normalise(config.titleName)]?.first(where: \.isCombinedDefinition)
+            let combined = catalogByKey[compact(normalise(config.titleName))]?.first(where: \.isCombinedDefinition)
             let definition: DefinitionKind = isCombined(config) ? .combined : (combined != nil ? .versionSpecificCombinedAvailable : .standard)
             rows.append(AppPatchRow(
                 id: "title:\(config.id)",
@@ -201,6 +280,23 @@ nonisolated enum PatchAnalyzer {
                 recommendedPatchTitle: definition == .versionSpecificCombinedAvailable ? (combined?.displayName ?? "") : "",
                 appInstallerTitle: ""
             ))
+        }
+
+        // Apps the admin has marked as handled through Jamf Title Editor take the status they chose.
+        rows = rows.map { row in
+            guard let mode = titleEditor[row.id] else { return row }
+            return AppPatchRow(
+                id: row.id,
+                name: row.name,
+                bundleIDs: row.bundleIDs,
+                versions: row.versions,
+                computerCount: row.computerCount,
+                status: mode == .patched ? .patched : .reportingOnly,
+                definition: .titleEditor,
+                jamfTitle: row.jamfTitle.isEmpty ? "Title Editor" : row.jamfTitle,
+                recommendedPatchTitle: row.recommendedPatchTitle,
+                appInstallerTitle: row.appInstallerTitle
+            )
         }
 
         return rows.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -223,6 +319,11 @@ nonisolated enum PatchAnalyzer {
         let words = tokens.filter { !$0.allSatisfy({ $0.isNumber || $0 == "." }) }
         if !words.isEmpty { tokens = words }
         return tokens.joined(separator: " ")
+    }
+
+    /// A normalised key with its spaces removed, so "Global Protect" matches "GlobalProtect".
+    private static func compact(_ key: String) -> String {
+        key.replacingOccurrences(of: " ", with: "")
     }
 
     /// Drops a leading publisher name from a normalised title, e.g. "microsoft windows app" → "windows app".
