@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3B74F0"/>
+      <stop offset="1" stop-color="#1A3F9E"/>
+    </linearGradient>
+    <clipPath id="shield">
+      <path d="M512 150 L800 255 L800 495 C800 690 676 815 512 880 C348 815 224 690 224 495 L224 255 Z"/>
+    </clipPath>
+  </defs>
+    <!-- macOS icon grid: 824 px rounded square, 100 px transparent margin -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <g transform="translate(512 512) scale(0.8) translate(-512 -512)">
+  <!-- Shield built from list rows (installed apps) -->
+  <g clip-path="url(#shield)" fill="#FFFFFF">
+    <rect x="200" y="140" width="624" height="140"/>
+    <rect x="200" y="310" width="624" height="140"/>
+    <rect x="200" y="650" width="624" height="260"/>
+  </g>
+  <!-- The gap: one row that isn't covered, pushed out of line -->
+  <rect x="300" y="480" width="560" height="140" rx="36" fill="#FFA41B"/>
+  <circle cx="400" cy="550" r="34" fill="#1A3F9E"/>
+  <rect x="460" y="532" width="300" height="36" rx="18" fill="#1A3F9E" opacity="0.85"/>
+  </g>
+</svg>
