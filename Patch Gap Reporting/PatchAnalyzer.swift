@@ -5,14 +5,14 @@ nonisolated enum PatchStatus: String, CaseIterable, Identifiable, Sendable {
     case notPatchedAvailable = "Not patched – title available"
     case notPatchedNoTitle = "Not patched – no Jamf title"
     /// A patch title exists, so Jamf reports versions, but no enabled patch policy updates the app.
-    case reportingOnly = "Reporting only"
+    case reportingOnly = "Not patched – reporting"
     /// An enabled patch policy or App Installer deployment keeps the app up to date.
     case patched = "Patched"
 
     var id: String { rawValue }
 
     var isPatched: Bool { self == .patched }
-    var hasNoTitle: Bool { self == .notPatchedAvailable || self == .notPatchedNoTitle }
+    var isNotPatched: Bool { self != .patched }
 }
 
 /// Which kind of Jamf patch definition covers (or could cover) an app.

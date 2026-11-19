@@ -13,7 +13,7 @@ enum RowFilter: String, CaseIterable, Identifiable {
 
     func includes(_ row: AppPatchRow) -> Bool {
         switch self {
-        case .unpatched: row.status.hasNoTitle
+        case .unpatched: row.status.isNotPatched
         case .reportingOnly: row.status == .reportingOnly
         case .needsCombined: row.definition.needsCombined
         case .patched: row.status.isPatched
@@ -146,11 +146,11 @@ struct ContentView: View {
                 ProgressView().controlSize(.small)
                 Text(model.progressMessage)
             } else {
-                let unpatched = model.rows.filter(\.status.hasNoTitle).count
+                let unpatched = model.rows.filter(\.status.isNotPatched).count
                 let reporting = model.rows.filter { $0.status == .reportingOnly }.count
                 let combined = model.rows.filter { $0.definition == .combined }.count
                 let notCombined = model.rows.filter(\.definition.needsCombined).count
-                Text("\(model.rows.count) apps · \(unpatched) not patched · \(reporting) reporting only · \(combined) using Combined · \(notCombined) could switch to Combined")
+                Text("\(model.rows.count) apps · \(unpatched) not patched (\(reporting) reporting only) · \(combined) using Combined · \(notCombined) could switch to Combined")
                 if let date = model.lastRefreshed {
                     Text("Updated \(date.formatted(date: .omitted, time: .shortened))")
                 }
