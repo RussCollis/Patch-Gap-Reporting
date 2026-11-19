@@ -60,6 +60,10 @@ struct ContentView: View {
         }
         .frame(minWidth: 900, minHeight: 500)
         .tint(.blue)
+        // Blue header bar; the light colour scheme keeps the toolbar's text black.
+        .toolbarBackground(LinearGradient(colors: [.blue, .indigo], startPoint: .leading, endPoint: .trailing), for: .windowToolbar)
+        .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
+        .toolbarColorScheme(.light, for: .windowToolbar)
         .navigationTitle("Patch Gap")
         .searchable(text: $searchText, prompt: "Search apps or bundle IDs")
         .toolbar { toolbarContent }
@@ -130,7 +134,7 @@ struct ContentView: View {
             } description: {
                 Text("Refresh to compare installed apps with your Patch Management titles.")
             } actions: {
-                Button("Refresh") { Task { await model.refresh() } }
+                Button { Task { await model.refresh() } } label: { Text("Refresh").foregroundStyle(.black) }
                     .buttonStyle(.glassProminent)
             }
         } else {
@@ -139,7 +143,7 @@ struct ContentView: View {
             } description: {
                 Text("Add your Jamf Pro URL and API client to get started.")
             } actions: {
-                Button("Connection Settings…") { showingSettings = true }
+                Button { showingSettings = true } label: { Text("Connection Settings…").foregroundStyle(.black) }
                     .buttonStyle(.glassProminent)
             }
         }
@@ -201,27 +205,45 @@ struct ContentView: View {
             .pickerStyle(.segmented)
         }
         ToolbarItem {
-            Menu("Filters", systemImage: "line.3.horizontal.decrease.circle") {
+            Menu {
                 Toggle("Hide Apple apps", isOn: $model.options.hideAppleApps)
                 Toggle("Only apps in /Applications", isOn: $model.options.applicationsFolderOnly)
+            } label: {
+                ToolbarIcon("Filters", systemImage: "line.3.horizontal.decrease.circle")
             }
-            .foregroundStyle(.blue)
+            .buttonStyle(.glassProminent)
         }
         ToolbarItem {
-            Button("Export CSV", systemImage: "square.and.arrow.up") { showingExporter = true }
-                .foregroundStyle(.blue)
+            Button { showingExporter = true } label: { ToolbarIcon("Export CSV", systemImage: "square.and.arrow.up") }
+                .buttonStyle(.glassProminent)
                 .disabled(visibleRows.isEmpty)
         }
         ToolbarItem {
-            Button("Connection Settings", systemImage: "gearshape") { showingSettings = true }
-                .foregroundStyle(.blue)
+            Button { showingSettings = true } label: { ToolbarIcon("Connection Settings", systemImage: "gearshape") }
+                .buttonStyle(.glassProminent)
         }
         ToolbarItem {
-            Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
+            Button { Task { await model.refresh() } } label: { ToolbarIcon("Refresh", systemImage: "arrow.clockwise") }
                 .buttonStyle(.glassProminent)
                 .disabled(model.isLoading || !model.isConfigured)
                 .keyboardShortcut("r")
         }
+    }
+}
+
+/// A toolbar button label drawn in black, so it reads clearly on the blue glass buttons.
+private struct ToolbarIcon: View {
+    let title: String
+    let systemImage: String
+
+    init(_ title: String, systemImage: String) {
+        self.title = title
+        self.systemImage = systemImage
+    }
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .foregroundStyle(.black)
     }
 }
 
@@ -325,14 +347,18 @@ private struct SettingsSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
-                Button("Save and Refresh") {
+                Button {
                     model.saveSettings()
                     dismiss()
                     Task { await model.refresh() }
+                } label: {
+                    Text("Save and Refresh").foregroundStyle(.black)
                 }
                 .keyboardShortcut(.defaultAction)
+                .buttonStyle(.glassProminent)
                 .disabled(!model.isConfigured)
             }
+            .tint(.blue)
         }
         .padding(20)
         .frame(width: 480)
